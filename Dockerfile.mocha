@@ -1,0 +1,39 @@
+FROM golang:1.21 as build
+RUN apt update && apt install -y curl bash clang tar wget musl-dev build-essential git make gcc bc ca-certificates
+
+ARG REPO_URL=https://github.com/celestiaorg/celestia-app.git
+ARG APP_VERSION=v1.0.0
+ARG GENESIS_URL=https://raw.githubusercontent.com/celestiaorg/networks/master/mocha-4/genesis.json
+RUN git clone -n "${REPO_URL}" celestia-app \
+    && cd celestia-app \
+    && git checkout tags/$APP_VERSION -b $APP_VERSION
+
+WORKDIR /go/celestia-app
+
+RUN go mod download
+RUN make build
+
+# Fetch genesis json file
+RUN wget -O /go/celestia-app/genesis.json "$GENESIS_URL"
+
+FROM ubuntu:22.04
+
+RUN apt-get update -y && apt-get install -y aria2 pv zstd curl lz4 bash tar wget clang pkg-config libssl-dev jq build-essential git make ncdu
+
+RUN mkdir -p /app \
+  && chown -R nobody:nogroup /app \
+  && mkdir -p /data \
+  && chown -R nobody:nogroup /data
+
+COPY --from=build /go/celestia-app/build/* /app/bin/
+COPY --from=build /go/celestia-app/genesis.json /app/assets/genesis.json.mocha
+
+# Copy config files templates
+COPY scripts/assets/ /app/assets
+# Set up version number
+ARG VERSION=v1.0.0
+RUN echo -n "${VERSION}" > /app/assets/VERSION
+EXPOSE 26656 26657 1317 9090
+
+RUN chmod +x /app/assets/entrypoint.sh
+ENTRYPOINT ["/app/assets/entrypoint.sh"]
